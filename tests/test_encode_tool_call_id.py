@@ -22,6 +22,7 @@ class EncodeToolCallIdTests(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIn("--compact-ui", result.output)
+        self.assertIn("--session-id", result.output)
 
 
 if __name__ == "__main__":

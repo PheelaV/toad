@@ -454,6 +454,10 @@ class Conversation(containers.Vertical):
     def external_prompts_accepting(self) -> bool:
         return self._external_prompts.accepting
 
+    @property
+    def control_resume_supported(self) -> bool:
+        return bool(self.agent is not None and getattr(self.agent, "supports_load_session", False))
+
     def _can_start_external_prompt(self) -> bool:
         return self.control_state == "idle"
 

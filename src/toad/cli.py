@@ -211,6 +211,7 @@ def run(
     is_flag=True,
     help="Start with compact chrome suitable for tiled agent panes",
 )
+@click.option("--session-id", help="Load an existing ACP provider session by ID")
 def acp(
     command: str,
     host: str,
@@ -220,6 +221,7 @@ def acp(
     serve: bool = False,
     control_socket: str | None = None,
     compact_ui: bool = False,
+    session_id: str | None = None,
 ) -> None:
     """Run an ACP agent from a command."""
 
@@ -259,6 +261,8 @@ def acp(
             command_components.append(f"--project-dir={project_dir}")
         if control_socket:
             command_components.append(f"--control-socket={control_socket}")
+        if session_id:
+            command_components.append(f"--session-id={session_id}")
         serve_command = shlex.join(command_components)
 
         server = Server(
@@ -276,6 +280,7 @@ def acp(
             project_dir=project_dir,
             control_socket=control_socket,
             compact_ui=compact_ui,
+            agent_session_id=session_id,
         )
         app.run()
         app.run_on_exit()

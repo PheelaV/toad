@@ -289,6 +289,7 @@ class ToadApp(App, inherit_bindings=False):
         mode: str | None = None,
         control_socket: str | None = None,
         compact_ui: bool = False,
+        agent_session_id: str | None = None,
     ) -> None:
         """Toad app.
 
@@ -298,6 +299,7 @@ class ToadApp(App, inherit_bindings=False):
             mode: Initial mode.
             control_socket: Optional local control socket path.
             compact_ui: Start with compact chrome suitable for tiled agent panes.
+            agent_session_id: Existing ACP provider session to load at startup.
         """
         self.settings_changed_signal: Signal[tuple[int, object]] = Signal(
             self, "settings_changed"
@@ -317,6 +319,7 @@ class ToadApp(App, inherit_bindings=False):
         self._control_socket_path = control_socket
         self._control_socket_server: ControlSocketServer | None = None
         self._compact_ui = compact_ui
+        self._agent_session_id = agent_session_id
 
         super().__init__()
         self.project_dir = Path(project_dir or "./").expanduser().resolve()
@@ -722,6 +725,7 @@ class ToadApp(App, inherit_bindings=False):
             "state": state,
             "queueDepth": conversation.external_queue_depth,
             "acceptingPrompts": conversation.external_prompts_accepting,
+            "resumeSupported": conversation.control_resume_supported,
         }
         if conversation.control_session_id is not None:
             response["sessionId"] = conversation.control_session_id
@@ -882,7 +886,7 @@ class ToadApp(App, inherit_bindings=False):
         from toad.screens.main import MainScreen
 
         project_path = Path(self.project_dir or "./").resolve().absolute()
-        return MainScreen(project_path, self.agent_data).data_bind(
+        return MainScreen(project_path, self.agent_data, self._agent_session_id).data_bind(
             column=ToadApp.column,
             column_width=ToadApp.column_width,
             scrollbar=ToadApp.scrollbar,

@@ -132,12 +132,19 @@ class PromptControllerTests(unittest.IsolatedAsyncioTestCase):
 
 
 class DispatcherTests(unittest.IsolatedAsyncioTestCase):
+    async def test_startup_session_id_reaches_initial_screen(self) -> None:
+        app = ToadApp(agent_session_id="saved-session")
+
+        async with app.run_test():
+            self.assertEqual(app.screen._agent_session_id, "saved-session")
+
     async def test_prompt_dispatch_and_session_target_errors(self) -> None:
         class Conversation:
             control_session_id = "acp-session"
             control_state = "idle"
             external_queue_depth = 0
             external_prompts_accepting = True
+            control_resume_supported = True
             agent_title = "Test Agent"
             current_mode = None
 
@@ -173,6 +180,7 @@ class DispatcherTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(status["sessionId"], "acp-session")
             self.assertEqual(status["state"], "idle")
+            self.assertTrue(status["resumeSupported"])
 
             response = await app._handle_control_request(request)
             self.assertEqual(response["state"], "accepted")
