@@ -487,6 +487,9 @@ class Conversation(containers.Vertical):
     def quiesce_external_prompts(self) -> None:
         self._external_prompts.quiesce()
 
+    def unquiesce_external_prompts(self) -> None:
+        self._external_prompts.unquiesce()
+
     async def _submit_external_prompt(self, text: str) -> None:
         await self._submit_agent_prompt(text, scroll_end=False)
 

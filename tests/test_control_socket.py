@@ -129,6 +129,8 @@ class PromptControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(caught.exception.code, "quiesced")
         self.assertEqual(controller.queue_depth, 0)
         self.assertFalse(controller.has_active)
+        controller.unquiesce()
+        self.assertTrue(controller.accepting)
 
 
 class DispatcherTests(unittest.IsolatedAsyncioTestCase):
@@ -162,6 +164,9 @@ class DispatcherTests(unittest.IsolatedAsyncioTestCase):
 
             def quiesce_external_prompts(self) -> None:
                 self.external_prompts_accepting = False
+
+            def unquiesce_external_prompts(self) -> None:
+                self.external_prompts_accepting = True
 
         app = ToadApp()
         app.session_tracker.sessions["session-1"] = SessionDetails(1, "session-1")
@@ -199,6 +204,11 @@ class DispatcherTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertFalse(quiesce["acceptingPrompts"])
             self.assertEqual(quiesce["state"], "idle")
+
+            unquiesce = await app._handle_control_request(
+                parse_request(b'{"version":1,"id":"u","action":"unquiesce"}')
+            )
+            self.assertTrue(unquiesce["acceptingPrompts"])
 
             unknown = parse_request(
                 b'{"version":1,"id":"2","action":"prompt","text":"wake",'

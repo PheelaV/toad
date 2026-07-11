@@ -798,6 +798,16 @@ class ToadApp(App, inherit_bindings=False):
                 "acceptingPrompts": conversation.external_prompts_accepting,
             }
 
+        if request.action == "unquiesce":
+            conversation = self._resolve_control_session(request)
+            conversation.unquiesce_external_prompts()
+            return {
+                "state": conversation.control_state,
+                "sessionId": conversation.control_session_id or "",
+                "queueDepth": conversation.external_queue_depth,
+                "acceptingPrompts": conversation.external_prompts_accepting,
+            }
+
         text = request.body.get("text")
         if not isinstance(text, str) or not text.strip():
             raise ControlError("invalid_request", "prompt text is required")

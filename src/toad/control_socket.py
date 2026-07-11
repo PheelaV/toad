@@ -17,7 +17,7 @@ MAX_REQUEST_SIZE = 64 * 1024
 MAX_QUEUE_DEPTH = 100
 READ_TIMEOUT = 5.0
 
-type ControlAction = Literal["ping", "status", "prompt", "cancel", "quiesce"]
+type ControlAction = Literal["ping", "status", "prompt", "cancel", "quiesce", "unquiesce"]
 type PromptPriority = Literal["normal", "urgent"]
 type QueueState = Literal["accepted", "queued", "coalesced"]
 
@@ -77,7 +77,7 @@ def parse_request(data: bytes) -> ControlRequest:
         raise ControlError(
             "invalid_request", "action is required", request_id=request_id
         )
-    if action not in {"ping", "status", "prompt", "cancel", "quiesce"}:
+    if action not in {"ping", "status", "prompt", "cancel", "quiesce", "unquiesce"}:
         raise ControlError(
             "unknown_action", f"unknown action: {action}", request_id=request_id
         )
@@ -127,6 +127,10 @@ class ExternalPromptController:
     def quiesce(self) -> None:
         """Atomically reject new external prompts for process replacement."""
         self._accepting = False
+
+    def unquiesce(self) -> None:
+        """Resume external prompts after an aborted lifecycle transition."""
+        self._accepting = True
 
     async def enqueue(
         self,
