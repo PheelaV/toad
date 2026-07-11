@@ -7,6 +7,6 @@ def encode_tool_call_id(tool_call_id: str) -> str:
     Returns:
         Tool call usable as widget id.
     """
-    hex_tool_call_id = "".join(f"{ord(character):2X}" for character in tool_call_id)
+    hex_tool_call_id = "".join(f"{ord(character):02X}" for character in tool_call_id)
     encoded_tool_call_id = f"tool-call-{hex_tool_call_id}"
     return encoded_tool_call_id

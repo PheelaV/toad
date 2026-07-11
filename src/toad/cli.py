@@ -206,6 +206,11 @@ def run(
     type=click.Path(path_type=str),
     help="Listen for local control requests on a Unix socket",
 )
+@click.option(
+    "--compact-ui",
+    is_flag=True,
+    help="Start with compact chrome suitable for tiled agent panes",
+)
 def acp(
     command: str,
     host: str,
@@ -214,6 +219,7 @@ def acp(
     project_dir: str | None,
     serve: bool = False,
     control_socket: str | None = None,
+    compact_ui: bool = False,
 ) -> None:
     """Run an ACP agent from a command."""
 
@@ -269,6 +275,7 @@ def acp(
             agent_data=agent_data,
             project_dir=project_dir,
             control_socket=control_socket,
+            compact_ui=compact_ui,
         )
         app.run()
         app.run_on_exit()

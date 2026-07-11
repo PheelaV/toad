@@ -288,6 +288,7 @@ class ToadApp(App, inherit_bindings=False):
         project_dir: str | None = None,
         mode: str | None = None,
         control_socket: str | None = None,
+        compact_ui: bool = False,
     ) -> None:
         """Toad app.
 
@@ -296,6 +297,7 @@ class ToadApp(App, inherit_bindings=False):
             project_dir: Project directory.
             mode: Initial mode.
             control_socket: Optional local control socket path.
+            compact_ui: Start with compact chrome suitable for tiled agent panes.
         """
         self.settings_changed_signal: Signal[tuple[int, object]] = Signal(
             self, "settings_changed"
@@ -314,6 +316,7 @@ class ToadApp(App, inherit_bindings=False):
         self.temporary_background_screen: Screen | None = None
         self._control_socket_path = control_socket
         self._control_socket_server: ControlSocketServer | None = None
+        self._compact_ui = compact_ui
 
         super().__init__()
         self.project_dir = Path(project_dir or "./").expanduser().resolve()
@@ -644,6 +647,10 @@ class ToadApp(App, inherit_bindings=False):
         self.ansi_theme_dark = DRACULA_TERMINAL_THEME
         self._settings = settings
         self.settings.set_all()
+        if self._compact_ui:
+            self.set_class(True, "-compact-input")
+            self.set_class(True, "-hide-sidebar")
+            self.show_sessions = False
 
     async def new_session_screen(
         self, get_screen: Callable[[], Screen]
