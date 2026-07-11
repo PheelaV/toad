@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from click.testing import CliRunner
 from textual.dom import check_identifiers
@@ -29,11 +30,17 @@ class EncodeToolCallIdTests(unittest.TestCase):
 class CompactUiTests(unittest.IsolatedAsyncioTestCase):
     async def test_compact_ui_keeps_session_tabs_hidden(self) -> None:
         app = ToadApp(compact_ui=True)
+        app.column = True
 
         async with app.run_test() as pilot:
             await pilot.pause()
+            self.assertFalse(app.column)
             self.assertFalse(app.show_sessions)
             self.assertFalse(app.has_class("-show-sessions-bar"))
+            app.agent_data = {"name": "tmux-team: collector"}
+            with patch.object(app._driver, "write") as write:
+                app.update_terminal_title()
+            write.assert_called_once_with("\033]0;tmux-team: collector\007")
 
 
 if __name__ == "__main__":

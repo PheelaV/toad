@@ -412,6 +412,14 @@ class ToadApp(App, inherit_bindings=False):
         """Update the terminal title."""
         screen_title = self.screen.title
 
+        if self._compact_ui:
+            terminal_title = str(
+                (self.agent_data or {}).get("name") or screen_title or "tmux-team"
+            )
+            if driver := self._driver:
+                driver.write(f"\033]0;{terminal_title}\007")
+            return
+
         title = (
             f"{self.terminal_title} — {screen_title}"
             if screen_title
@@ -605,7 +613,9 @@ class ToadApp(App, inherit_bindings=False):
 
     def setting_updated(self, key: str, value: object) -> None:
         if key == "ui.column":
-            if isinstance(value, bool):
+            if self._compact_ui:
+                self.column = False
+            elif isinstance(value, bool):
                 self.column = value
         elif key == "ui.column-width":
             if isinstance(value, int):
@@ -651,6 +661,7 @@ class ToadApp(App, inherit_bindings=False):
         self._settings = settings
         self.settings.set_all()
         if self._compact_ui:
+            self.column = False
             self.set_class(True, "-compact-input")
             self.set_class(True, "-hide-sidebar")
             self.show_sessions = False
