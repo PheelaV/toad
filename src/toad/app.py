@@ -981,6 +981,9 @@ class ToadApp(App, inherit_bindings=False):
             self.action_show_help_panel()
 
     def update_show_sessions(self) -> None:
+        if self._compact_ui:
+            self.show_sessions = False
+            return
         match self.settings.get("ui.sessions-bar", str):
             case "always":
                 self.show_sessions = True

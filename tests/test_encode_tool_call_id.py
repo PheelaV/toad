@@ -5,6 +5,7 @@ import unittest
 from click.testing import CliRunner
 from textual.dom import check_identifiers
 from toad.acp.encode_tool_call_id import encode_tool_call_id
+from toad.app import ToadApp
 from toad.cli import main
 
 
@@ -23,6 +24,16 @@ class EncodeToolCallIdTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIn("--compact-ui", result.output)
         self.assertIn("--session-id", result.output)
+
+
+class CompactUiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_compact_ui_keeps_session_tabs_hidden(self) -> None:
+        app = ToadApp(compact_ui=True)
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            self.assertFalse(app.show_sessions)
+            self.assertFalse(app.has_class("-show-sessions-bar"))
 
 
 if __name__ == "__main__":
