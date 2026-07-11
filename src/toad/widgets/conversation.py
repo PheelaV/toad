@@ -450,6 +450,10 @@ class Conversation(containers.Vertical):
     def external_queue_depth(self) -> int:
         return self._external_prompts.queue_depth
 
+    @property
+    def external_prompts_accepting(self) -> bool:
+        return self._external_prompts.accepting
+
     def _can_start_external_prompt(self) -> bool:
         return self.control_state == "idle"
 
@@ -475,6 +479,9 @@ class Conversation(containers.Vertical):
         if self.turn != "agent" or agent is None:
             return False, False
         return True, await agent.cancel()
+
+    def quiesce_external_prompts(self) -> None:
+        self._external_prompts.quiesce()
 
     async def _submit_external_prompt(self, text: str) -> None:
         await self._submit_agent_prompt(text, scroll_end=False)

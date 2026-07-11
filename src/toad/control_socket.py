@@ -17,7 +17,7 @@ MAX_REQUEST_SIZE = 64 * 1024
 MAX_QUEUE_DEPTH = 100
 READ_TIMEOUT = 5.0
 
-type ControlAction = Literal["ping", "status", "prompt", "cancel"]
+type ControlAction = Literal["ping", "status", "prompt", "cancel", "quiesce"]
 type PromptPriority = Literal["normal", "urgent"]
 type QueueState = Literal["accepted", "queued", "coalesced"]
 
@@ -77,7 +77,7 @@ def parse_request(data: bytes) -> ControlRequest:
         raise ControlError(
             "invalid_request", "action is required", request_id=request_id
         )
-    if action not in {"ping", "status", "prompt", "cancel"}:
+    if action not in {"ping", "status", "prompt", "cancel", "quiesce"}:
         raise ControlError(
             "unknown_action", f"unknown action: {action}", request_id=request_id
         )
@@ -110,6 +110,7 @@ class ExternalPromptController:
         self._queue_limit = queue_limit
         self._queue: list[ExternalPrompt] = []
         self._active: ExternalPrompt | None = None
+        self._accepting = True
 
     @property
     def queue_depth(self) -> int:
@@ -119,6 +120,14 @@ class ExternalPromptController:
     def has_active(self) -> bool:
         return self._active is not None
 
+    @property
+    def accepting(self) -> bool:
+        return self._accepting
+
+    def quiesce(self) -> None:
+        """Atomically reject new external prompts for process replacement."""
+        self._accepting = False
+
     async def enqueue(
         self,
         text: str,
@@ -127,6 +136,9 @@ class ExternalPromptController:
         coalesce_key: str | None = None,
         can_start: bool,
     ) -> QueueResult:
+        if not self._accepting:
+            raise ControlError("quiesced", "external prompt delivery is quiesced")
+
         prompt = ExternalPrompt(text, priority, coalesce_key)
 
         if coalesce_key is not None:

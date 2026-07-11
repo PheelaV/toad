@@ -721,6 +721,7 @@ class ToadApp(App, inherit_bindings=False):
             "pid": os.getpid(),
             "state": state,
             "queueDepth": conversation.external_queue_depth,
+            "acceptingPrompts": conversation.external_prompts_accepting,
         }
         if conversation.control_session_id is not None:
             response["sessionId"] = conversation.control_session_id
@@ -781,6 +782,16 @@ class ToadApp(App, inherit_bindings=False):
                 "submitted": submitted,
                 "sessionId": conversation.control_session_id or "",
                 "queueDepth": conversation.external_queue_depth,
+            }
+
+        if request.action == "quiesce":
+            conversation = self._resolve_control_session(request)
+            conversation.quiesce_external_prompts()
+            return {
+                "state": conversation.control_state,
+                "sessionId": conversation.control_session_id or "",
+                "queueDepth": conversation.external_queue_depth,
+                "acceptingPrompts": conversation.external_prompts_accepting,
             }
 
         text = request.body.get("text")

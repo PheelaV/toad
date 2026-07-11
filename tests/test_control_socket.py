@@ -116,6 +116,20 @@ class PromptControllerTests(unittest.IsolatedAsyncioTestCase):
             composer, {"text": "partially written human draft", "focused": True}
         )
 
+    async def test_quiesce_atomically_rejects_new_prompts(self) -> None:
+        async def submit(_text: str) -> None:
+            pass
+
+        controller = ExternalPromptController(submit)
+        controller.quiesce()
+
+        self.assertFalse(controller.accepting)
+        with self.assertRaises(ControlError) as caught:
+            await controller.enqueue("late prompt", can_start=True)
+        self.assertEqual(caught.exception.code, "quiesced")
+        self.assertEqual(controller.queue_depth, 0)
+        self.assertFalse(controller.has_active)
+
 
 class DispatcherTests(unittest.IsolatedAsyncioTestCase):
     async def test_prompt_dispatch_and_session_target_errors(self) -> None:
@@ -123,6 +137,7 @@ class DispatcherTests(unittest.IsolatedAsyncioTestCase):
             control_session_id = "acp-session"
             control_state = "idle"
             external_queue_depth = 0
+            external_prompts_accepting = True
             agent_title = "Test Agent"
             current_mode = None
 
@@ -137,6 +152,9 @@ class DispatcherTests(unittest.IsolatedAsyncioTestCase):
 
             async def cancel_control_turn(self) -> tuple[bool, bool]:
                 return True, True
+
+            def quiesce_external_prompts(self) -> None:
+                self.external_prompts_accepting = False
 
         app = ToadApp()
         app.session_tracker.sessions["session-1"] = SessionDetails(1, "session-1")
@@ -167,6 +185,12 @@ class DispatcherTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertTrue(cancel["active"])
             self.assertTrue(cancel["submitted"])
+
+            quiesce = await app._handle_control_request(
+                parse_request(b'{"version":1,"id":"q","action":"quiesce"}')
+            )
+            self.assertFalse(quiesce["acceptingPrompts"])
+            self.assertEqual(quiesce["state"], "idle")
 
             unknown = parse_request(
                 b'{"version":1,"id":"2","action":"prompt","text":"wake",'
