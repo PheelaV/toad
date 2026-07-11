@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Added an optional private Unix control socket for status, cancellation, and
+  composer-safe asynchronous prompt queueing.
+
 ### Changed
 
 - Style tweak for compact prompt

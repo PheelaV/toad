@@ -251,6 +251,8 @@ See on-screen instructions for details.
                 )
             )
             return
+        if self._reject_while_agent_busy():
+            return
         self.post_message(UserInputSubmitted(self.text, self.shell_mode))
         self.clear()
 
@@ -267,6 +269,8 @@ See on-screen instructions for details.
                 )
             )
             return
+        if self._reject_while_agent_busy():
+            return
         if self.suggestion:
             if " " not in self.text:
                 self.insert(self.suggestion + " ")
@@ -282,6 +286,21 @@ See on-screen instructions for details.
             return
         self.post_message(UserInputSubmitted(self.text, self.shell_mode))
         self.clear()
+
+    def _reject_while_agent_busy(self) -> bool:
+        if self.shell_mode:
+            return False
+        from toad.widgets.conversation import Conversation
+
+        if self.query_ancestor(Conversation).turn != "agent":
+            return False
+        self.app.bell()
+        self.post_message(
+            messages.Flash(
+                "Agent is busy. Wait for the current turn to finish.", "error"
+            )
+        )
+        return True
 
     def action_cursor_up(self, select: bool = False):
         if self.selection.is_empty and not select:

@@ -260,6 +260,27 @@ To see all subcommands and switches, add the `--help` switch:
 toad --help
 ```
 
+### Local control socket
+
+To let local tools enqueue prompts without writing to the terminal, pass a Unix
+socket path to either launch form:
+
+```bash
+toad run -a AGENT --control-socket /tmp/toad.sock
+toad acp "AGENT COMMAND" --control-socket /tmp/toad.sock
+```
+
+The private (`0600`) socket accepts one newline-delimited JSON request per
+connection. Protocol version 1 provides `ping`, `status`, `prompt`, and `cancel`
+actions. A prompt request contains a non-empty `text` value and may set
+`priority` to `normal` or `urgent`, plus an optional `coalesceKey`.
+
+External prompts use an in-memory queue and the same conversation submission
+path as interactive prompts, while leaving the prompt editor and its focus
+unchanged. The queue is discarded when Toad exits. Toad removes stale sockets,
+refuses to replace non-socket paths or live listeners, and removes its socket on
+normal shutdown.
+
 ### Web server
 
 You can run Toad as a web application.

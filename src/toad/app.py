@@ -7,7 +7,7 @@ from pathlib import Path
 import platform
 import json
 from time import monotonic
-from typing import Any, Callable, ClassVar, TYPE_CHECKING
+from typing import Any, Callable, ClassVar, TYPE_CHECKING, cast
 
 from rich import terminal_theme
 
@@ -31,6 +31,12 @@ from toad.settings_schema import SCHEMA
 from toad.version import VersionMeta
 from toad import paths
 from toad import atomic
+from toad.control_socket import (
+    ControlError,
+    ControlRequest,
+    ControlSocketServer,
+    PromptPriority,
+)
 from toad.session_tracker import SessionTracker, SessionDetails
 
 if TYPE_CHECKING:
@@ -281,6 +287,7 @@ class ToadApp(App, inherit_bindings=False):
         agent_data: AgentData | None = None,
         project_dir: str | None = None,
         mode: str | None = None,
+        control_socket: str | None = None,
     ) -> None:
         """Toad app.
 
@@ -288,7 +295,7 @@ class ToadApp(App, inherit_bindings=False):
             agent_data: Agent data to run.
             project_dir: Project directory.
             mode: Initial mode.
-            agent: Agent identity or shor name.
+            control_socket: Optional local control socket path.
         """
         self.settings_changed_signal: Signal[tuple[int, object]] = Signal(
             self, "settings_changed"
@@ -305,6 +312,8 @@ class ToadApp(App, inherit_bindings=False):
         )
         self._session_tracker = SessionTracker(self.session_update_signal)
         self.temporary_background_screen: Screen | None = None
+        self._control_socket_path = control_socket
+        self._control_socket_server: ControlSocketServer | None = None
 
         super().__init__()
         self.project_dir = Path(project_dir or "./").expanduser().resolve()
@@ -664,6 +673,136 @@ class ToadApp(App, inherit_bindings=False):
         self.set_timer(1, self.run_version_check)
         self.set_process_title()
         self.update_show_sessions()
+        if self._control_socket_path is not None:
+            self._control_socket_server = ControlSocketServer(
+                self._control_socket_path, self._handle_control_request
+            )
+            await self._control_socket_server.start()
+
+    async def on_unmount(self) -> None:
+        if self._control_socket_server is not None:
+            await self._control_socket_server.stop()
+            self._control_socket_server = None
+
+    def _active_control_session(self):
+        """Return the active main screen and conversation."""
+
+        from toad.screens.main import MainScreen
+
+        for screen in reversed(self.screen_stack):
+            if isinstance(screen, MainScreen):
+                return screen, screen.conversation
+        return None
+
+    def _control_status(self, *, detailed: bool) -> dict[str, object]:
+        active_session = self._active_control_session()
+        if active_session is None:
+            return {
+                "pid": os.getpid(),
+                "state": "starting",
+                "queueDepth": 0,
+            }
+
+        screen, conversation = active_session
+        state = conversation.control_state
+        if screen.id is not None:
+            session_details = self.session_tracker.get_session(screen.id)
+            if session_details is not None and session_details.state == "asking":
+                state = "asking"
+
+        response: dict[str, object] = {
+            "pid": os.getpid(),
+            "state": state,
+            "queueDepth": conversation.external_queue_depth,
+        }
+        if conversation.control_session_id is not None:
+            response["sessionId"] = conversation.control_session_id
+        if detailed:
+            if screen.id is not None:
+                response["screenId"] = screen.id
+            if conversation.agent_title is not None:
+                response["agent"] = conversation.agent_title
+            if conversation.current_mode is not None:
+                response["mode"] = conversation.current_mode.name
+        return response
+
+    def _resolve_control_session(self, request: ControlRequest):
+        requested_session = request.body.get("sessionId")
+        if requested_session is not None and (
+            not isinstance(requested_session, str) or not requested_session
+        ):
+            raise ControlError(
+                "invalid_request", "sessionId must be a non-empty string"
+            )
+
+        active_session = self._active_control_session()
+        if requested_session is None:
+            if self.session_tracker.session_count > 1:
+                raise ControlError(
+                    "ambiguous_session",
+                    "sessionId is required when multiple sessions are open",
+                )
+            if active_session is None:
+                raise ControlError("not_ready", "no active ACP session")
+        elif (
+            active_session is None
+            or active_session[1].control_session_id != requested_session
+        ):
+            raise ControlError("unknown_session", "requested session is not active")
+
+        assert active_session is not None
+        conversation = active_session[1]
+        if conversation.control_state == "starting":
+            raise ControlError("not_ready", "active ACP session is not ready")
+        if conversation.control_state == "failed":
+            raise ControlError("agent_failed", "active ACP agent has failed")
+        return conversation
+
+    async def _handle_control_request(
+        self, request: ControlRequest
+    ) -> dict[str, object]:
+        if request.action == "ping":
+            return self._control_status(detailed=False)
+        if request.action == "status":
+            return self._control_status(detailed=True)
+
+        if request.action == "cancel":
+            conversation = self._resolve_control_session(request)
+            active, submitted = await conversation.cancel_control_turn()
+            return {
+                "active": active,
+                "submitted": submitted,
+                "sessionId": conversation.control_session_id or "",
+                "queueDepth": conversation.external_queue_depth,
+            }
+
+        text = request.body.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise ControlError("invalid_request", "prompt text is required")
+        priority = request.body.get("priority", "normal")
+        if priority not in {"normal", "urgent"}:
+            raise ControlError(
+                "invalid_request", "priority must be 'normal' or 'urgent'"
+            )
+        coalesce_key = request.body.get("coalesceKey")
+        if coalesce_key is not None and (
+            not isinstance(coalesce_key, str) or not coalesce_key
+        ):
+            raise ControlError(
+                "invalid_request", "coalesceKey must be a non-empty string"
+            )
+
+        conversation = self._resolve_control_session(request)
+        result = await conversation.enqueue_external_prompt(
+            text.strip(),
+            priority=cast(PromptPriority, priority),
+            coalesce_key=coalesce_key,
+        )
+        return {
+            "state": result.state,
+            "sessionId": conversation.control_session_id or "",
+            "queueDepth": result.queue_depth,
+        }
 
     @work(thread=True, exit_on_error=False)
     def set_process_title(self) -> None:

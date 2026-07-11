@@ -43,6 +43,7 @@ from toad.app import ToadApp
 from toad.acp import protocol as acp_protocol
 from toad.answer import Answer
 from toad.agent import AgentBase, AgentReady, AgentFail
+from toad.control_socket import ExternalPromptController, PromptPriority, QueueResult
 from toad.format_path import format_path
 from toad.directory_watcher import DirectoryWatcher, DirectoryChanged
 from toad.history import History
@@ -400,6 +401,10 @@ class Conversation(containers.Vertical):
         self._initial_prompt = initial_prompt
 
         self._post_lock = asyncio.Lock()
+        self._agent_status: str | Content = ""
+        self._external_prompts = ExternalPromptController(
+            self._submit_external_prompt
+        )
 
     def update_title(self) -> None:
         """Update the screen title."""
@@ -415,6 +420,78 @@ class Conversation(containers.Vertical):
         if self._agent_data is not None:
             return self._agent_data["name"]
         return None
+
+    @property
+    def control_session_id(self) -> str | None:
+        """Return the active ACP session identifier, when available."""
+
+        session_id = getattr(self.agent, "session_id", None)
+        return session_id if isinstance(session_id, str) else None
+
+    @property
+    def control_state(self) -> str:
+        """Return the generic control protocol state."""
+
+        if self._agent_fail:
+            return "failed"
+        if (
+            not self.agent_ready
+            or self.agent is None
+            or self.control_session_id is None
+        ):
+            return "starting"
+        if self.prompt._ask is not None or self.prompt.ask_queue:
+            return "asking"
+        if self.turn == "agent":
+            return "busy"
+        return "idle"
+
+    @property
+    def external_queue_depth(self) -> int:
+        return self._external_prompts.queue_depth
+
+    def _can_start_external_prompt(self) -> bool:
+        return self.control_state == "idle"
+
+    async def enqueue_external_prompt(
+        self,
+        text: str,
+        *,
+        priority: PromptPriority,
+        coalesce_key: str | None,
+    ) -> QueueResult:
+        try:
+            return await self._external_prompts.enqueue(
+                text,
+                priority=priority,
+                coalesce_key=coalesce_key,
+                can_start=self._can_start_external_prompt(),
+            )
+        finally:
+            self._update_external_queue_status()
+
+    async def cancel_control_turn(self) -> tuple[bool, bool]:
+        agent = self.agent
+        if self.turn != "agent" or agent is None:
+            return False, False
+        return True, await agent.cancel()
+
+    async def _submit_external_prompt(self, text: str) -> None:
+        await self._submit_agent_prompt(text, scroll_end=False)
+
+    def _update_external_queue_status(self) -> None:
+        queue_depth = self.external_queue_depth
+        if queue_depth:
+            queue_status = Content(
+                f"{queue_depth} external prompt{'s' if queue_depth != 1 else ''} queued"
+            )
+            self.status = (
+                Content.assemble(self._agent_status, " • ", queue_status)
+                if self._agent_status
+                else queue_status
+            )
+        else:
+            self.status = self._agent_status
 
     @property
     def is_watching_directory(self) -> bool:
@@ -807,16 +884,35 @@ class Conversation(containers.Vertical):
                 await self.post_shell(event.body)
             self.window.scroll_end(animate=False)
         elif text := event.body.strip():
+            if self.turn == "agent":
+                self.prompt.text = event.body
+                self.flash(
+                    "Agent is busy. Prompt restored for the next turn.",
+                    style="error",
+                )
+                return
             await self.prompt_history.append(event.body)
             self.prompt_history_index = 0
             if text.startswith("/") and await self.slash_command(text):
                 # Toad has processed the slash command.
                 return
+            await self._submit_agent_prompt(text, scroll_end=True)
+
+    async def _submit_agent_prompt(self, text: str, *, scroll_end: bool) -> None:
+        """Render and submit a prompt without interacting with the composer."""
+
+        previous_turn = self.turn
+        self.turn = "agent"
+        try:
             await self.post(UserInput(text))
-            self.window.scroll_end(animate=False)
+            if scroll_end:
+                self.window.scroll_end(animate=False)
             self._loading = await self.post(Loading("Please wait..."), loading=True)
             await asyncio.sleep(0)
             self.send_prompt_to_agent(text)
+        except BaseException:
+            self.turn = previous_turn
+            raise
 
     @work
     async def send_prompt_to_agent(self, prompt: str) -> None:
@@ -900,6 +996,13 @@ class Conversation(containers.Vertical):
                 sound="turn-over",
             )
 
+        try:
+            await self._external_prompts.turn_finished(
+                can_start=self._can_start_external_prompt()
+            )
+        finally:
+            self._update_external_queue_status()
+
     @on(Menu.OptionSelected)
     async def on_menu_option_selected(self, event: Menu.OptionSelected) -> None:
         event.stop()
@@ -929,7 +1032,8 @@ class Conversation(containers.Vertical):
 
     @on(acp_messages.UpdateStatusLine)
     async def on_update_status_line(self, message: acp_messages.UpdateStatusLine):
-        self.status = message.status_line
+        self._agent_status = message.status_line
+        self._update_external_queue_status()
 
     @on(acp_messages.Update)
     async def on_acp_agent_message(self, message: acp_messages.Update):

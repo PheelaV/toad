@@ -112,6 +112,12 @@ def main(ctx, version):
     help="Public URL to use in conjunction with --serve",
 )
 @click.option("-s", "--serve", is_flag=True, help="Serve Toad as a web application")
+@click.option(
+    "--control-socket",
+    metavar="PATH",
+    type=click.Path(path_type=str),
+    help="Listen for local control requests on a Unix socket",
+)
 def run(
     port: int,
     host: str,
@@ -119,10 +125,13 @@ def run(
     project_dir: str = ".",
     agent: str = "1",
     public_url: str | None = None,
+    control_socket: str | None = None,
 ):
     """Run an installed agent (same as `toad PATH`)."""
 
     check_directory(project_dir)
+    if serve and control_socket:
+        raise click.UsageError("--control-socket cannot be combined with --serve")
 
     if agent:
         import asyncio
@@ -135,6 +144,7 @@ def run(
         mode=None if agent_data else "store",
         agent_data=agent_data,
         project_dir=project_dir,
+        control_socket=control_socket,
     )
     if serve:
         import shlex
@@ -190,6 +200,12 @@ def run(
     help="Host to use in conjunction with --serve",
 )
 @click.option("-s", "--serve", is_flag=True, help="Serve Toad as a web application")
+@click.option(
+    "--control-socket",
+    metavar="PATH",
+    type=click.Path(path_type=str),
+    help="Listen for local control requests on a Unix socket",
+)
 def acp(
     command: str,
     host: str,
@@ -197,12 +213,16 @@ def acp(
     title: str | None,
     project_dir: str | None,
     serve: bool = False,
+    control_socket: str | None = None,
 ) -> None:
     """Run an ACP agent from a command."""
 
     from rich import print
 
     from toad.agent_schema import Agent as AgentData
+
+    if serve and control_socket:
+        raise click.UsageError("--control-socket cannot be combined with --serve")
 
     command_name = command.split(" ", 1)[0].lower()
     identity = f"{command_name}.custom.batrachian.ai"
@@ -231,6 +251,8 @@ def acp(
         command_components = [sys.argv[0], "acp", command]
         if project_dir:
             command_components.append(f"--project-dir={project_dir}")
+        if control_socket:
+            command_components.append(f"--control-socket={control_socket}")
         serve_command = shlex.join(command_components)
 
         server = Server(
@@ -243,7 +265,11 @@ def acp(
         server.serve()
 
     else:
-        app = ToadApp(agent_data=agent_data, project_dir=project_dir)
+        app = ToadApp(
+            agent_data=agent_data,
+            project_dir=project_dir,
+            control_socket=control_socket,
+        )
         app.run()
         app.run_on_exit()
 
