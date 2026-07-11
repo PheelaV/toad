@@ -17,7 +17,16 @@ MAX_REQUEST_SIZE = 64 * 1024
 MAX_QUEUE_DEPTH = 100
 READ_TIMEOUT = 5.0
 
-type ControlAction = Literal["ping", "status", "prompt", "cancel", "quiesce", "unquiesce"]
+type ControlAction = Literal[
+    "ping",
+    "status",
+    "prompt",
+    "cancel",
+    "quiesce",
+    "unquiesce",
+    "configOptions",
+    "setConfig",
+]
 type PromptPriority = Literal["normal", "urgent"]
 type QueueState = Literal["accepted", "queued", "coalesced"]
 
@@ -77,7 +86,16 @@ def parse_request(data: bytes) -> ControlRequest:
         raise ControlError(
             "invalid_request", "action is required", request_id=request_id
         )
-    if action not in {"ping", "status", "prompt", "cancel", "quiesce", "unquiesce"}:
+    if action not in {
+        "ping",
+        "status",
+        "prompt",
+        "cancel",
+        "quiesce",
+        "unquiesce",
+        "configOptions",
+        "setConfig",
+    }:
         raise ControlError(
             "unknown_action", f"unknown action: {action}", request_id=request_id
         )

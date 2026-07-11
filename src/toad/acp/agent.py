@@ -154,6 +154,7 @@ class Agent(AgentBase):
         self.auth_methods: list[protocol.AuthMethod] = []
         self.session_pk: int | None = session_pk
         self.tool_calls: dict[str, protocol.ToolCall] = {}
+        self.config_options: list[protocol.SessionConfigOption] = []
         self._message_target: MessagePump | None = None
 
         self._terminal_count: int = 0
@@ -265,6 +266,15 @@ class Agent(AgentBase):
             return False
         return message_target.post_message(message)
 
+    def _replace_config_options(
+        self, config_options: list[protocol.SessionConfigOption]
+    ) -> list[protocol.SessionConfigOption]:
+        """Replace and publish the complete config-option state."""
+
+        self.config_options = deepcopy(config_options)
+        self.post_message(messages.ConfigOptionsUpdate(deepcopy(self.config_options)))
+        return deepcopy(self.config_options)
+
     @jsonrpc.expose("session/update")
     def rpc_session_update(
         self,
@@ -342,6 +352,14 @@ class Agent(AgentBase):
 
             case {"sessionUpdate": "current_mode_update", "currentModeId": mode_id}:
                 self.post_message(messages.ModeUpdate(mode_id))
+
+            case {
+                "sessionUpdate": "config_option_update",
+                "configOptions": config_options,
+            }:
+                self._replace_config_options(
+                    cast(list[protocol.SessionConfigOption], config_options)
+                )
 
             case {"sessionUpdate": "usage_update", "used": used, "size": size}:
                 match update.get("cost"):
@@ -724,6 +742,7 @@ class Agent(AgentBase):
                         "readTextFile": True,
                         "writeTextFile": True,
                     },
+                    "session": {"configOptions": {"boolean": {}}},
                     "terminal": True,
                 },
                 {
@@ -752,6 +771,7 @@ class Agent(AgentBase):
         response = await session_new_response.wait()
         assert response is not None
         self.session_id = response["sessionId"]
+        self._replace_config_options(response.get("configOptions") or [])
 
         if self.supports_load_session:
             db = DB()
@@ -795,6 +815,8 @@ class Agent(AgentBase):
         with self.request():
             session_load_response = api.session_load(cwd, [], self.session_id)
         response = await session_load_response.wait()
+        assert response is not None
+        self._replace_config_options(response.get("configOptions") or [])
 
         if (modes := response.get("modes", None)) is not None:
             current_mode = modes["currentModeId"]
@@ -868,6 +890,40 @@ class Agent(AgentBase):
 
     async def set_mode(self, mode_id: str) -> str | None:
         return await self.acp_session_set_mode(mode_id)
+
+    async def acp_session_set_config_option(
+        self, config_id: str, value: str | bool
+    ) -> list[protocol.SessionConfigOption]:
+        """Set one option and replace state from the agent's full response."""
+
+        assert self.session_id is not None
+        option = next(
+            (option for option in self.config_options if option["id"] == config_id),
+            None,
+        )
+        with self.request():
+            if option is not None and option.get("type") == "boolean":
+                response = api.session_set_config_option(
+                    self.session_id, config_id, value, "boolean"
+                )
+            else:
+                response = api.session_set_config_option(
+                    self.session_id, config_id, value
+                )
+        try:
+            result = await response.wait()
+        except jsonrpc.APIError as error:
+            match error.data:
+                case {"details": details} if isinstance(details, str):
+                    raise RuntimeError(details) from error
+            raise RuntimeError("Failed to set config option") from error
+        assert result is not None
+        return self._replace_config_options(result["configOptions"])
+
+    async def set_config_option(
+        self, config_id: str, value: str | bool
+    ) -> list[protocol.SessionConfigOption]:
+        return await self.acp_session_set_config_option(config_id, value)
 
     async def set_session_name(self, name: str) -> None:
         if self.session_pk is None:

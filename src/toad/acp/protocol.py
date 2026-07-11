@@ -1,3 +1,5 @@
+# mypy: disable-error-code="call-arg"
+
 from typing_extensions import Any, TypedDict, Required, Literal
 
 
@@ -20,9 +22,22 @@ class FileSystemCapability(SchemaDict, total=False, extra_items=Any):
     writeTextFile: bool
 
 
+class BooleanConfigOptionCapabilities(SchemaDict, total=False, extra_items=Any):
+    pass
+
+
+class SessionConfigOptionsCapabilities(SchemaDict, total=False, extra_items=Any):
+    boolean: BooleanConfigOptionCapabilities | None
+
+
+class ClientSessionCapabilities(SchemaDict, total=False, extra_items=Any):
+    configOptions: SessionConfigOptionsCapabilities | None
+
+
 # https://agentclientprotocol.com/protocol/schema#clientcapabilities
 class ClientCapabilities(SchemaDict, total=False, extra_items=Any):
     fs: FileSystemCapability
+    session: ClientSessionCapabilities | None
     terminal: bool
 
 
@@ -288,6 +303,54 @@ class SessionModelState(SchemaDict, total=False, extra_items=Any):
     currentModelId: Required[ModelId]
 
 
+type SessionConfigId = str
+type SessionConfigValueId = str
+
+
+class SessionConfigSelectOption(SchemaDict, total=False, extra_items=Any):
+    description: str | None
+    name: Required[str]
+    value: Required[SessionConfigValueId]
+
+
+class SessionConfigSelectGroup(SchemaDict, total=False, extra_items=Any):
+    id: Required[str]
+    name: Required[str]
+    options: Required[list[SessionConfigSelectOption]]
+
+
+type SessionConfigSelectOptions = (
+    list[SessionConfigSelectOption] | list[SessionConfigSelectGroup]
+)
+
+
+class SessionConfigSelect(SchemaDict, total=False, extra_items=Any):
+    category: str | None
+    currentValue: Required[SessionConfigValueId]
+    description: str | None
+    id: Required[SessionConfigId]
+    name: Required[str]
+    options: Required[SessionConfigSelectOptions]
+    type: Required[Literal["select"]]
+
+
+class SessionConfigBoolean(SchemaDict, total=False, extra_items=Any):
+    category: str | None
+    currentValue: Required[bool]
+    description: str | None
+    id: Required[SessionConfigId]
+    name: Required[str]
+    type: Required[Literal["boolean"]]
+
+
+type SessionConfigOption = SessionConfigSelect | SessionConfigBoolean
+
+
+class ConfigOptionUpdate(SchemaDict, total=False, extra_items=Any):
+    configOptions: Required[list[SessionConfigOption]]
+    sessionUpdate: Required[Literal["config_option_update"]]
+
+
 # https://agentclientprotocol.com/protocol/schema#param-plan
 class Plan(SchemaDict, total=False, extra_items=Any):
     entries: Required[list[PlanEntry]]
@@ -330,6 +393,7 @@ type SessionUpdate = (
     | Plan
     | AvailableCommandsUpdate
     | CurrentModeUpdate
+    | ConfigOptionUpdate
     | UsageUpdate
 )
 
@@ -378,7 +442,8 @@ class InitializeResponse(SchemaDict, total=False, extra_items=Any):
 class NewSessionResponse(SchemaDict, total=False, extra_items=Any):
     _meta: object
     sessionId: Required[str]
-    # Unstable from here
+    configOptions: list[SessionConfigOption] | None
+    # Legacy / unstable from here
     models: SessionModelState | None
     modes: SessionModeState | None
 
@@ -386,6 +451,7 @@ class NewSessionResponse(SchemaDict, total=False, extra_items=Any):
 # https://agentclientprotocol.com/protocol/schema#loadsessionresponse
 class LoadSessionResponse(SchemaDict, total=False, extra_items=Any):
     _meta: object
+    configOptions: list[SessionConfigOption] | None
     modes: SessionModeState | None
 
 
@@ -443,6 +509,10 @@ class WaitForTerminalExitResponse(TypedDict, total=False, extra_items=Any):
 # https://agentclientprotocol.com/protocol/schema#setsessionmoderesponse
 class SetSessionModeResponse(TypedDict, total=False, extra_items=Any):
     meta: dict
+
+
+class SetSessionConfigOptionResponse(SchemaDict, total=False, extra_items=Any):
+    configOptions: Required[list[SessionConfigOption]]
 
 
 # ---------------------------------------------------------------------------------------

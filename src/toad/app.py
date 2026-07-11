@@ -734,7 +734,24 @@ class ToadApp(App, inherit_bindings=False):
                 response["screenId"] = screen.id
             if conversation.agent_title is not None:
                 response["agent"] = conversation.agent_title
-            if conversation.current_mode is not None:
+            config_options = getattr(conversation, "config_options", [])
+            category_keys = {
+                "model": "model",
+                "thought_level": "effort",
+                "mode": "mode",
+            }
+            config_categories: set[str] = set()
+            for option in config_options:
+                if (
+                    (category := option.get("category")) in category_keys
+                    and category not in config_categories
+                ):
+                    response[category_keys[category]] = option["currentValue"]
+                    config_categories.add(category)
+            if (
+                "mode" not in config_categories
+                and conversation.current_mode is not None
+            ):
                 response["mode"] = conversation.current_mode.name
         return response
 
@@ -777,6 +794,34 @@ class ToadApp(App, inherit_bindings=False):
             return self._control_status(detailed=False)
         if request.action == "status":
             return self._control_status(detailed=True)
+
+        if request.action == "configOptions":
+            conversation = self._resolve_control_session(request)
+            return {
+                "sessionId": conversation.control_session_id or "",
+                "configOptions": conversation.config_options,
+            }
+
+        if request.action == "setConfig":
+            conversation = self._resolve_control_session(request)
+            config_id = request.body.get("configId")
+            if not isinstance(config_id, str) or not config_id:
+                raise ControlError(
+                    "invalid_request", "configId must be a non-empty string"
+                )
+            if "value" not in request.body:
+                raise ControlError("invalid_request", "config value is required")
+            value = request.body["value"]
+            if not isinstance(value, (str, bool)):
+                raise ControlError(
+                    "invalid_config_value",
+                    f"invalid value for config option: {config_id}",
+                )
+            config_options = await conversation.set_config_option(config_id, value)
+            return {
+                "sessionId": conversation.control_session_id or "",
+                "configOptions": config_options,
+            }
 
         if request.action == "cancel":
             conversation = self._resolve_control_session(request)

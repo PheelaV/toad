@@ -1,9 +1,15 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from textual.content import Content
 from textual.message import Message
+
+if TYPE_CHECKING:
+    from toad.acp import protocol
 
 
 class AgentReady(Message):
@@ -46,6 +52,13 @@ class AgentBase(ABC):
         Returns:
             str: The stop reason.
         """
+
+    async def set_config_option(
+        self, config_id: str, value: str | bool
+    ) -> list[protocol.SessionConfigOption]:
+        """Set a session configuration option."""
+
+        raise NotImplementedError
 
     async def cancel(self) -> bool:
         """Cancel prompt.

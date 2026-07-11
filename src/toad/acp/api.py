@@ -3,6 +3,8 @@
 ACP remote API
 """
 
+from typing import Literal
+
 from toad import jsonrpc
 from toad.acp import protocol
 
@@ -52,4 +54,15 @@ def session_prompt(
 @API.method(name="session/set_mode")
 def session_set_mode(sessionId: str, modeId: str) -> protocol.SetSessionModeResponse:
     """https://agentclientprotocol.com/protocol/session-modes#from-the-client"""
+    ...
+
+
+@API.method(name="session/set_config_option")
+def session_set_config_option(
+    sessionId: str,
+    configId: str,
+    value: str | bool,
+    type: Literal["boolean"] | None = None,
+) -> protocol.SetSessionConfigOptionResponse:
+    """https://agentclientprotocol.com/protocol/v1/session-config-options"""
     ...

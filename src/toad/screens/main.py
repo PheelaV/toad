@@ -29,12 +29,50 @@ from toad.widgets.side_bar import SideBar
 
 
 class ModeProvider(Provider):
+    @staticmethod
+    def _config_commands(conversation: Conversation):
+        commands = []
+        for category, name, help_text in (
+            ("model", "Model", "Change the session model"),
+            ("thought_level", "Effort", "Change the session reasoning effort"),
+            ("mode", "Mode", "Change the session mode"),
+        ):
+            if conversation.get_config_option(category) is not None:
+                commands.append(
+                    (
+                        name,
+                        partial(conversation.open_config_picker, category),
+                        help_text,
+                    )
+                )
+        if conversation.config_options:
+            commands.append(
+                (
+                    "Configuration",
+                    partial(conversation.open_config_picker, None),
+                    "Change session configuration",
+                )
+            )
+        return commands
+
     async def search(self, query: str) -> Hits:
         """Search for Python files."""
         matcher = self.matcher(query)
 
         screen = self.screen
         assert isinstance(screen, MainScreen)
+
+        for command, callback, help_text in self._config_commands(
+            screen.conversation
+        ):
+            score = matcher.match(command)
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(command),
+                    callback,
+                    help=help_text,
+                )
 
         for mode in sorted(
             screen.conversation.modes.values(), key=lambda mode: mode.name
@@ -52,6 +90,11 @@ class ModeProvider(Provider):
     async def discover(self) -> Hits:
         screen = self.screen
         assert isinstance(screen, MainScreen)
+
+        for command, callback, help_text in self._config_commands(
+            screen.conversation
+        ):
+            yield DiscoveryHit(command, callback, help=help_text)
 
         for mode in sorted(
             screen.conversation.modes.values(), key=lambda mode: mode.name

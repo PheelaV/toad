@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import shlex
-from typing import TYPE_CHECKING, Callable, Literal, Self
+from typing import Any, TYPE_CHECKING, Callable, Literal, Self, cast
 
 from textual import on
 from textual.reactive import var, Initialize
@@ -35,6 +35,7 @@ from toad.prompt.extract import extract_paths_from_prompt
 from toad.path_complete import PathComplete
 
 if TYPE_CHECKING:
+    from toad.acp import protocol
     from toad.acp.agent import Mode
 
 
@@ -49,6 +50,132 @@ class ModeSwitcher(OptionList):
 
     def action_dismiss(self):
         self.blur()
+
+
+class ConfigSwitcher(OptionList):
+    """A generic picker for all ACP session config options."""
+
+    BINDING_GROUP_TITLE = "Session configuration"
+    BINDINGS = [Binding("escape", "dismiss", "Dismiss configuration")]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._root_options: list[protocol.SessionConfigOption] = []
+        self._option: protocol.SessionConfigOption | None = None
+        self._config_ids: dict[str, protocol.SessionConfigOption] = {}
+        self._values: dict[str, str | bool] = {}
+
+    @staticmethod
+    def _select_choices(option: Any) -> list[dict[str, Any]]:
+        choices: list[dict[str, Any]] = []
+        for entry in option.get("options", []):
+            if "value" in entry:
+                choices.append(entry)
+            else:
+                choices.extend(entry.get("options", []))
+        return choices
+
+    def open(
+        self,
+        config_options: list[protocol.SessionConfigOption],
+        category: str | None = None,
+    ) -> None:
+        self._root_options = [
+            option
+            for option in config_options
+            if category is None or option.get("category") == category
+        ]
+        if len(self._root_options) == 1:
+            self._show_values(self._root_options[0])
+        else:
+            self._show_options()
+        self.focus()
+
+    def _show_options(self) -> None:
+        from toad.visuals.columns import Columns
+
+        self._option = None
+        self._values.clear()
+        self._config_ids = {
+            f"config:{index}": option
+            for index, option in enumerate(self._root_options)
+        }
+        columns = Columns("auto", "auto", "flex")
+        for option in self._root_options:
+            columns.add_row(
+                Content.from_markup("[bold]$name[/]", name=option["name"]),
+                Content(str(option["currentValue"])),
+                Content.styled(option.get("description") or "", "dim"),
+            )
+        self.set_options(
+            [
+                Option(row, id=option_id)
+                for row, option_id in zip(columns, self._config_ids)
+            ]
+        )
+
+    def _show_values(self, option: protocol.SessionConfigOption) -> None:
+        from toad.visuals.columns import Columns
+
+        self._option = option
+        choices: list[dict[str, Any]]
+        if option["type"] == "boolean":
+            choices = [
+                {"value": True, "name": "On"},
+                {"value": False, "name": "Off"},
+            ]
+        else:
+            choices = self._select_choices(option)
+        self._values = {
+            f"value:{index}": cast(str | bool, choice["value"])
+            for index, choice in enumerate(choices)
+        }
+        columns = Columns("auto", "auto", "flex")
+        for choice in choices:
+            columns.add_row(
+                (
+                    Content.styled("✔", "$text-success")
+                    if choice["value"] == option["currentValue"]
+                    else ""
+                ),
+                Content.from_markup("[bold]$name[/]", name=str(choice["name"])),
+                Content.styled(choice.get("description") or "", "dim"),
+            )
+        self.set_options(
+            [
+                Option(row, id=value_id)
+                for row, value_id in zip(columns, self._values)
+            ]
+        )
+        current_id = next(
+            (
+                value_id
+                for value_id, value in self._values.items()
+                if value == option["currentValue"]
+            ),
+            None,
+        )
+        if current_id is not None:
+            self.highlighted = self.get_option_index(current_id)
+
+    @on(OptionList.OptionSelected)
+    def on_option_selected(self, event: OptionList.OptionSelected) -> None:
+        option_id = event.option_id
+        if self._option is None:
+            if option_id is not None and (
+                option := self._config_ids.get(option_id)
+            ) is not None:
+                self._show_values(option)
+            return
+        if option_id is not None and (value := self._values.get(option_id)) is not None:
+            self.post_message(messages.ChangeConfig(self._option["id"], value))
+            self.blur()
+
+    def action_dismiss(self) -> None:
+        if self._option is not None and len(self._root_options) > 1:
+            self._show_options()
+        else:
+            self.blur()
 
 
 class InvokeFileSearch(Message):
@@ -465,6 +592,7 @@ class Prompt(containers.VerticalGroup):
     slash_complete = getters.query_one(SlashComplete)
     question = getters.query_one(Question)
     mode_switcher = getters.query_one(ModeSwitcher)
+    config_switcher = getters.query_one(ConfigSwitcher)
 
     slash_commands: var[list[SlashCommand]] = var(list)
     shell_mode = var(False)
@@ -479,6 +607,7 @@ class Prompt(containers.VerticalGroup):
     agent_ready: var[bool] = var(False)
     current_mode: var[Mode | None] = var(None)
     modes: var[dict[str, Mode] | None] = var(None)
+    config_options: var[list[protocol.SessionConfigOption]] = var([])
     status: var[str | Content] = var("")
 
     app = getters.app(ToadApp)
@@ -788,6 +917,7 @@ class Prompt(containers.VerticalGroup):
             yield CondensedPath().data_bind(path=Prompt.working_directory)
             yield StatusLine(markup=False).data_bind(status=Prompt.status)
             yield ModeSwitcher()
+            yield ConfigSwitcher()
             yield ModeInfo("mode")
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:

@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added an optional private Unix control socket for status, cancellation, and
   composer-safe asynchronous prompt queueing.
+- Added ACP v1 session config options with local model, effort, mode, and
+  generic config pickers plus control-socket discovery and mutation.
 
 ### Changed
 

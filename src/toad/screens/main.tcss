@@ -544,7 +544,7 @@ ModeInfo:hover {
     pointer: pointer;
 }
 
-ModeSwitcher {
+ModeSwitcher, ConfigSwitcher {
 
     max-height: 50vh;
         

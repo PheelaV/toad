@@ -35,6 +35,15 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(request.action, "prompt")
         self.assertTrue(request.body["future"])
 
+        for action in ("configOptions", "setConfig"):
+            with self.subTest(action=action):
+                request = parse_request(
+                    json.dumps(
+                        {"version": 1, "id": "request-2", "action": action}
+                    ).encode()
+                )
+                self.assertEqual(request.action, action)
+
     def test_parse_errors_have_stable_codes(self) -> None:
         cases = [
             (b"not json", "invalid_request"),

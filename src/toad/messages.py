@@ -58,6 +58,12 @@ class ChangeMode(Message):
 
 
 @dataclass
+class ChangeConfig(Message):
+    config_id: str
+    value: str | bool
+
+
+@dataclass
 class Flash(Message):
     """Request a message flash.
 

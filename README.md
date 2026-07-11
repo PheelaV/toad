@@ -260,6 +260,11 @@ To see all subcommands and switches, add the `--help` switch:
 toad --help
 ```
 
+ACP agents may advertise session configuration dynamically. Toad exposes
+`/model`, `/effort`, `/mode`, and `/config` for the options the active agent
+provides, including select and boolean values. Legacy ACP modes remain available
+when an agent does not advertise a mode config option.
+
 ### Local control socket
 
 To let local tools enqueue prompts without writing to the terminal, pass a Unix
@@ -272,7 +277,10 @@ toad acp "AGENT COMMAND" --control-socket /tmp/toad.sock
 
 The private (`0600`) socket accepts one newline-delimited JSON request per
 connection. Protocol version 1 provides `ping`, `status`, `prompt`, and `cancel`
-actions. A prompt request contains a non-empty `text` value and may set
+actions, lifecycle quiescing, plus `configOptions` and `setConfig` for
+agent-advertised ACP session configuration. Config changes require an idle
+session and return the complete agent-confirmed option list. A prompt request
+contains a non-empty `text` value and may set
 `priority` to `normal` or `urgent`, plus an optional `coalesceKey`.
 
 External prompts use an in-memory queue and the same conversation submission
@@ -306,7 +314,7 @@ To discuss Toad, see the Discussions tab, or join the #toad channel on the [Text
 Some planned features:
 
 - [ ] UI for MCP servers
-- [ ] Expose model selection (waiting on ACP update)
+- [x] Expose model selection via ACP session config options
 - [x] Sessions (resume)
 - [x] Multiple agents
 - [ ] Windows native support

@@ -146,6 +146,13 @@ class ModeUpdate(AgentMessage):
 
 
 @dataclass
+class ConfigOptionsUpdate(AgentMessage):
+    """Replace the complete session config-option state."""
+
+    config_options: list[protocol.SessionConfigOption]
+
+
+@dataclass
 class UsageUpdage(AgentMessage):
     """Context window change"""
 

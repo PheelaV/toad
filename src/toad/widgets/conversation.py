@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal
 from pathlib import Path
 from time import monotonic
 
-from typing import Callable, Any
+from typing import Callable, Any, cast
 
 from rich.segment import Segment
 
@@ -43,7 +43,12 @@ from toad.app import ToadApp
 from toad.acp import protocol as acp_protocol
 from toad.answer import Answer
 from toad.agent import AgentBase, AgentReady, AgentFail
-from toad.control_socket import ExternalPromptController, PromptPriority, QueueResult
+from toad.control_socket import (
+    ControlError,
+    ExternalPromptController,
+    PromptPriority,
+    QueueResult,
+)
 from toad.format_path import format_path
 from toad.directory_watcher import DirectoryWatcher, DirectoryChanged
 from toad.history import History
@@ -350,6 +355,7 @@ class Conversation(containers.Vertical):
     agent_ready: var[bool] = var(False)
     modes: var[dict[str, Mode]] = var({}, bindings=True)
     current_mode: var[Mode | None] = var(None)
+    config_options: var[list[acp_protocol.SessionConfigOption]] = var([], bindings=True)
     turn: var[Literal["agent", "client"] | None] = var(None, bindings=True)
     status: var[str | Content] = var("")
     column: var[bool] = var(False, toggle_class="-column")
@@ -381,6 +387,8 @@ class Conversation(containers.Vertical):
         self._session_pk = session_pk
         self._agent_fail = False
         self._mouse_down_offset: Offset | None = None
+        self._legacy_modes: dict[str, Mode] = {}
+        self._legacy_current_mode: str | None = None
 
         self._focusable_terminals: list[Terminal] = []
 
@@ -596,6 +604,7 @@ class Conversation(containers.Vertical):
             agent_ready=Conversation.agent_ready,
             current_mode=Conversation.current_mode,
             modes=Conversation.modes,
+            config_options=Conversation.config_options,
             status=Conversation.status,
         )
 
@@ -877,11 +886,28 @@ class Conversation(containers.Vertical):
     async def on_change_mode(self, event: messages.ChangeMode) -> None:
         await self.set_mode(event.mode_id)
 
+    @work
+    @on(messages.ChangeConfig)
+    async def on_change_config(self, event: messages.ChangeConfig) -> None:
+        try:
+            await self.set_config_option(event.config_id, event.value)
+        except ControlError as error:
+            self.notify(error.message, title="Set Configuration", severity="error")
+        except RuntimeError as error:
+            self.notify(str(error), title="Set Configuration", severity="error")
+
     @on(acp_messages.ModeUpdate)
     def on_mode_update(self, event: acp_messages.ModeUpdate) -> None:
-        if (modes := self.modes) is not None:
-            if (mode := modes.get(event.current_mode)) is not None:
-                self.current_mode = mode
+        self._legacy_current_mode = event.current_mode
+        self._sync_mode_surface()
+
+    @on(acp_messages.ConfigOptionsUpdate)
+    def on_config_options_update(
+        self, message: acp_messages.ConfigOptionsUpdate
+    ) -> None:
+        self.config_options = message.config_options
+        self._sync_mode_surface()
+        self.update_slash_commands()
 
     @on(messages.UserInputSubmitted)
     async def on_user_input_submitted(self, event: messages.UserInputSubmitted) -> None:
@@ -1244,6 +1270,120 @@ class Conversation(containers.Vertical):
             return_code, signal = await terminal.wait_for_exit()
             message.result_future.set_result((return_code or 0, signal))
 
+    def get_config_option(
+        self, category: str
+    ) -> acp_protocol.SessionConfigOption | None:
+        """Return the first advertised option in a semantic category."""
+
+        return next(
+            (
+                option
+                for option in self.config_options
+                if option.get("category") == category
+            ),
+            None,
+        )
+
+    def config_value(self, category: str) -> str | bool | None:
+        """Return a concise current value for a config category."""
+
+        if (option := self.get_config_option(category)) is None:
+            return None
+        return option["currentValue"]
+
+    @staticmethod
+    def _select_config_values(
+        option: acp_protocol.SessionConfigOption,
+    ) -> set[str]:
+        values: set[str] = set()
+        entries = cast(list[dict[str, Any]], option.get("options", []))
+        for entry in entries:
+            if "value" in entry:
+                values.add(entry["value"])
+            else:
+                values.update(choice["value"] for choice in entry.get("options", []))
+        return values
+
+    async def set_config_option(
+        self, config_id: str, value: str | bool
+    ) -> list[acp_protocol.SessionConfigOption]:
+        """Validate and mutate one option through the active ACP agent."""
+
+        if self.control_state != "idle" or not self.external_prompts_accepting:
+            raise ControlError(
+                "not_ready", "session configuration can only change while idle"
+            )
+        if not self.config_options:
+            raise ControlError(
+                "config_options_unsupported",
+                "active agent did not advertise session config options",
+            )
+        option = next(
+            (option for option in self.config_options if option["id"] == config_id),
+            None,
+        )
+        if option is None:
+            raise ControlError(
+                "unknown_config_option", f"unknown config option: {config_id}"
+            )
+        if option["type"] == "select":
+            valid = type(value) is str and value in self._select_config_values(option)
+        elif option["type"] == "boolean":
+            valid = type(value) is bool
+        else:
+            valid = False
+        if not valid:
+            raise ControlError(
+                "invalid_config_value",
+                f"invalid value for config option: {config_id}",
+            )
+        if (agent := self.agent) is None:
+            raise ControlError("not_ready", "active ACP session is not ready")
+        confirmed = await agent.set_config_option(config_id, value)
+        self.config_options = confirmed
+        self._sync_mode_surface()
+        self.update_slash_commands()
+        return self.config_options
+
+    def open_config_picker(self, category: str | None = None) -> bool:
+        """Open the generic picker for one category or all options."""
+
+        if category is None:
+            options = self.config_options
+        elif (option := self.get_config_option(category)) is not None:
+            options = [option]
+        else:
+            options = []
+        if not options:
+            labels = {
+                "model": "model",
+                "thought_level": "effort",
+                "mode": "mode",
+            }
+            label = labels.get(category or "", "session configuration")
+            self.notify(
+                f"The active agent did not advertise {label} options.",
+                title="Unsupported Configuration",
+                severity="warning",
+            )
+            return False
+        self.prompt.config_switcher.open(options)
+        return True
+
+    def _sync_mode_surface(self) -> None:
+        """Prefer config-option modes while retaining the legacy fallback."""
+
+        if self.get_config_option("mode") is not None:
+            self.modes = {}
+            self.current_mode = None
+        else:
+            self.modes = self._legacy_modes
+            self.current_mode = (
+                self._legacy_modes.get(self._legacy_current_mode)
+                if self._legacy_current_mode is not None
+                else None
+            )
+
     async def set_mode(self, mode_id: str | None) -> None:
         """Set the mode give its id (if it exists).
 
@@ -1257,6 +1397,13 @@ class Conversation(containers.Vertical):
             return
         if mode_id is None:
             self.current_mode = None
+        elif (mode_option := self.get_config_option("mode")) is not None:
+            try:
+                await self.set_config_option(mode_option["id"], mode_id)
+            except ControlError as error:
+                self.notify(error.message, title="Set Mode", severity="error")
+            except RuntimeError as error:
+                self.notify(str(error), title="Set Mode", severity="error")
         else:
             if (error := await agent.set_mode(mode_id)) is not None:
                 self.notify(error, title="Set Mode", severity="error")
@@ -1269,8 +1416,9 @@ class Conversation(containers.Vertical):
 
     @on(acp_messages.SetModes)
     async def on_acp_set_modes(self, message: acp_messages.SetModes):
-        self.modes = message.modes
-        self.current_mode = self.modes[message.current_mode]
+        self._legacy_modes = message.modes
+        self._legacy_current_mode = message.current_mode
+        self._sync_mode_surface()
 
     @on(messages.HistoryMove)
     async def on_history_move(self, message: messages.HistoryMove) -> None:
@@ -1466,6 +1614,18 @@ class Conversation(containers.Vertical):
         ]
 
         slash_commands.extend(self.agent_slash_commands)
+        if self.get_config_option("model") is not None:
+            slash_commands.append(SlashCommand("/model", "Change the session model"))
+        if self.get_config_option("thought_level") is not None:
+            slash_commands.append(
+                SlashCommand("/effort", "Change the session reasoning effort")
+            )
+        if self.get_config_option("mode") is not None or self.modes:
+            slash_commands.append(SlashCommand("/mode", "Change the session mode"))
+        if self.config_options:
+            slash_commands.append(
+                SlashCommand("/config", "Change session configuration")
+            )
         deduplicated_slash_commands = {
             slash_command.command: slash_command for slash_command in slash_commands
         }
@@ -1986,6 +2146,21 @@ class Conversation(containers.Vertical):
                 be forwarded to the agent.
         """
         command, _, parameters = text[1:].partition(" ")
+        if command in {"model", "effort", "mode", "config"}:
+            category = {
+                "model": "model",
+                "effort": "thought_level",
+                "mode": "mode",
+                "config": None,
+            }[command]
+            if command == "mode" and self.get_config_option("mode") is None:
+                if self.modes:
+                    self.prompt.mode_switcher.focus()
+                else:
+                    self.open_config_picker("mode")
+            else:
+                self.open_config_picker(category)
+            return True
         if command == "toad:about":
             from toad import about
             from toad.widgets.markdown_note import MarkdownNote
